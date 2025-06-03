@@ -1,5 +1,9 @@
-from flask import render_template, flash, redirect, url_for
-from app import app
+from flask import render_template, flash, redirect, url_for, request
+from flask_login import current_user, login_user, logout_user, login_required
+import sqlalchemy as sa
+from urllib.parse import urlsplit
+from app import app, db
+from app.models import User
 from app.forms import LoginForm
 
 test_user = {"username": "Tim"}
@@ -27,20 +31,42 @@ test_posts = [
 
 @app.route("/")
 @app.route("/index")
+@login_required
 def index():
-    return render_template("index.html", title="Home", user=test_user, posts=test_posts)
+    return render_template("index.html", title="Home", posts=test_posts)
 
 
 @app.route("/login", methods=["GET", "POST"])
 def login():
-    form = LoginForm()
-
-    if form.validate_on_submit():
-        flash(
-            "Login requested for user {}, remember_me={}".format(
-                form.username.data, form.remember_me.data
-            )
-        )
+    # Redirect to index if already logged in
+    if current_user.is_authenticated:
         return redirect(url_for("index"))
 
+    # Otherwise create, validate, and submit the form
+    form = LoginForm()
+    if form.validate_on_submit():
+        user: User = db.session.scalar(
+            sa.select(User).where(User.username == form.username.data)
+        )
+
+        # If user does not exist or wrong password, flash message
+        if user is None or not user.check_password(form.password.data):
+            flash("Invalid username or password")
+            return redirect(url_for("login"))
+
+        # Login user with flask-login login_user function
+        login_user(user, remember=form.remember_me.data)
+
+        # Return to original page or index
+        next_page = request.args.get("next")
+        if not next_page or urlsplit(next_page).netloc != "":
+            next_page = url_for("index")
+        return redirect(next_page)
+
     return render_template("login.html", title="Sign In", form=form)
+
+
+@app.route("/logout")
+def logout():
+    logout_user()
+    return redirect(url_for("index"))
